@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Obsidian-like Graph View</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100vw; height: 100vh;
+    width: 100dvw; height: 100dvh;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1e1e2e; color: #cdd6f4;
+    position: fixed; inset: 0;
+  }
+  #app { position: absolute; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  canvas:active { cursor: grabbing; }
+
+  #toolbar {
+    position: absolute; top: 16px; left: 16px;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: rgba(30,30,46,0.85);
+    border: 1px solid #313244;
+    border-radius: 10px;
+    padding: 8px 10px;
+    backdrop-filter: blur(10px);
+    z-index: 10;
+    max-width: calc(100vw - 32px);
+  }
+  #toolbar input {
+    background: #181825; border: 1px solid #313244; color: #cdd6f4;
+    padding: 6px 10px; border-radius: 6px; outline: none; width: 180px; font-size: 13px;
+  }
+  #toolbar input:focus { border-color: #89b4fa; }
+  #toolbar button {
+    background: #89b4fa; color: #1e1e2e; border: none; padding: 6px 12px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;
+    transition: background .15s;
+  }
+  #toolbar button:hover { background: #a6c8ff; }
+  #toolbar button.ghost {
+    background: transparent; color: #cdd6f4; border: 1px solid #313244;
+  }
+  #toolbar button.ghost:hover { background: #313244; }
+  #toolbar button.danger {
+    background: transparent; color: #f38ba8; border: 1px solid #f38ba8;
+  }
+  #toolbar button.danger:hover { background: rgba(243,139,168,0.15); }
+  #toolbar .sep { width: 1px; height: 22px; background: #313244; margin: 0 2px; }
+
+  #panel {
+    position: absolute; top: 16px; right: 16px; bottom: 16px;
+    width: 380px; max-width: calc(100vw - 32px);
+    background: rgba(24,24,37,0.95);
+    border: 1px solid #313244; border-radius: 12px;
+    padding: 18px; overflow-y: auto;
+    backdrop-filter: blur(10px);
+    transform: translateX(calc(100% + 40px));
+    transition: transform .25s ease;
+    z-index: 10;
+  }
+  #panel.open { transform: translateX(0); }
+  #panel h2 { font-size: 20px; margin-bottom: 12px; color: #89b4fa; padding-right: 24px; outline: none; }
+  #panel h2[contenteditable]:focus { background: rgba(137,180,250,0.08); border-radius: 4px; }
+  #panel .tag {
+    display: inline-block; background: #313244; color: #f9e2af;
+    padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-right: 6px; margin-bottom: 6px;
+  }
+  #panel textarea {
+    width: 100%; min-height: 120px; resize: vertical;
+    background: #181825; border: 1px solid #313244; color: #cdd6f4;
+    padding: 10px; border-radius: 8px; outline: none;
+    font-family: inherit; font-size: 14px; line-height: 1.6;
+    margin: 10px 0;
+  }
+  #panel textarea:focus { border-color: #89b4fa; }
+  #panel .close {
+    position: absolute; top: 12px; right: 12px;
+    background: transparent; border: none; color: #6c7086; font-size: 18px; cursor: pointer;
+  }
+  #panel .close:hover { color: #f38ba8; }
+  #panel .links-title {
+    margin-top: 18px; font-size: 12px; text-transform: uppercase;
+    color: #6c7086; letter-spacing: 1px; display: flex; justify-content: space-between; align-items: center;
+  }
+  #panel .link-item {
+    padding: 6px 8px; margin-top: 4px; border-radius: 6px; cursor: pointer;
+    background: #181825; font-size: 13px; transition: background .15s;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #panel .link-item:hover { background: #313244; color: #89b4fa; }
+  #panel .link-item .unlink {
+    color: #6c7086; font-size: 14px; padding: 0 4px; cursor: pointer;
+  }
+  #panel .link-item .unlink:hover { color: #f38ba8; }
+  #panel .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  #panel .actions button {
+    flex: 1; min-width: 100px;
+    background: #313244; color: #cdd6f4; border: none;
+    padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    font-size: 12px; font-weight: 600;
+  }
+  #panel .actions button:hover { background: #45475a; }
+  #panel .actions button.danger { color: #f38ba8; }
+  #panel .actions button.danger:hover { background: rgba(243,139,168,0.15); }
+  #panel select {
+    background: #181825; border: 1px solid #313244; color: #cdd6f4;
+    padding: 4px 8px; border-radius: 6px; font-size: 12px; outline: none;
+  }
+
+  #hint {
+    position: absolute; bottom: 16px; left: 16px;
+    font-size: 12px; color: #6c7086;
+    background: rgba(30,30,46,0.7); padding: 6px 12px; border-radius: 8px;
+    z-index: 5;
+  }
+
+  #toast {
+    position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #313244; color: #cdd6f4;
+    padding: 10px 18px; border-radius: 8px; font-size: 13px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .25s, transform .25s;
+    z-index: 100;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.success { background: #a6e3a1; color: #1e1e2e; }
+  #toast.error { background: #f38ba8; color: #1e1e2e; }
+
+  #saveIndicator {
+    font-size: 11px; color: #6c7086; padding: 0 4px;
+    transition: color .3s;
+  }
+  #saveIndicator.saving { color: #f9e2af; }
+  #saveIndicator.saved { color: #a6e3a1; }
+
+  @media (max-width: 600px){
+    #hint { display: none; }
+    #panel { width: auto; left: 16px; }
+    #toolbar input { width: 100px; }
+    #toolbar { padding: 6px 8px; gap: 6px; }
+    #toolbar button { padding: 6px 8px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="cv"></canvas>
+
+  <div id="toolbar">
+    <input id="search" placeholder="Поиск заметок...">
+    <button id="addBtn">+ Заметка</button>
+    <button class="ghost" id="resetBtn" title="Сбросить вид">⟳</button>
+    <button class="ghost" id="fsBtn" title="На весь экран">⛶</button>
+    <span class="sep"></span>
+    <button class="ghost" id="exportBtn" title="Скачать JSON">💾 Скачать</button>
+    <button class="ghost" id="importBtn" title="Загрузить JSON">📂 Загрузить</button>
+    <button class="danger" id="clearBtn" title="Удалить всё и вернуть демо">🗑 Сброс</button>
+    <span id="saveIndicator"></span>
+    <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+  </div>
+
+  <div id="panel">
+    <button class="close" id="closePanel">✕</button>
+    <div id="panelContent"></div>
+  </div>
+
+  <div id="hint">Клик — открыть • Перетаскивание — сдвинуть • Колесо — зум • Фон — панорама</div>
+  <div id="toast"></div>
+</div>
+
+<script>
+/* =========================================================
+   DEMO DATA (используется при первом запуске или сбросе)
+   ========================================================= */
+const palette = ['#89b4fa','#f38ba8','#a6e3a1','#f9e2af','#cba6f7','#94e2d5','#fab387'];
+
+const DEMO_DATA = {
+  version: 1,
+  nodes: [
+    { id: 'obsidian', label: 'Obsidian',  tags: ['app'], content: 'Приложение для ведения заметок в виде графа связей. Заметки в Markdown, ссылки через [[wikilinks]].', r: 14, color: '#89b4fa' },
+    { id: 'markdown', label: 'Markdown',  tags: ['формат'], content: 'Лёгкий язык разметки. Заголовки, списки, **жирный**, *курсив*, `код` и ссылки.', r: 10, color: '#f38ba8' },
+    { id: 'graph',    label: 'Graph View',tags: ['фича'], content: 'Визуализация связей между заметками. Узлы — заметки, рёбра — ссылки.', r: 12, color: '#a6e3a1' },
+    { id: 'backlinks',label: 'Backlinks', tags: ['фича'], content: 'Обратные ссылки — показывают, какие заметки ссылаются на текущую.', r: 10, color: '#f9e2af' },
+    { id: 'tags',     label: 'Теги',      tags: ['фича'], content: '#теги помогают категоризировать заметки и фильтровать граф.', r: 10, color: '#cba6f7' },
+    { id: 'plugins',  label: 'Плагины',   tags: ['экосистема'], content: 'Тысячи community-плагинов: Kanban, Dataview, Excalidraw, Templater...', r: 11, color: '#94e2d5' },
+    { id: 'canvas',   label: 'Canvas',    tags: ['фича'], content: 'Бесконечное полотно для визуального размещения заметок и карточек.', r: 11, color: '#fab387' },
+    { id: 'pkm',      label: 'PKM',       tags: ['концепт'], content: 'Personal Knowledge Management — управление личными знаниями.', r: 12, color: '#89b4fa' },
+    { id: 'zettel',   label: 'Zettelkasten', tags: ['метод'], content: 'Метод Никласа Лумана: атомарные заметки и плотная сеть ссылок.', r: 11, color: '#f38ba8' },
+    { id: 'md-note',  label: 'Заметка',   tags: ['базовое'], content: 'Основная единица Obsidian. Файл .md в хранилище (vault).', r: 10, color: '#a6e3a1' },
+    { id: 'vault',    label: 'Vault',     tags: ['базовое'], content: 'Папка с заметками и вложениями — это и есть твоя база.', r: 10, color: '#f9e2af' },
+    { id: 'sync',     label: 'Sync',      tags: ['сервис'], content: 'Платная синхронизация между устройствами (или через Git, Dropbox).', r: 9, color: '#cba6f7' }
+  ],
+  links: [
+    ['obsidian','markdown'], ['obsidian','graph'], ['obsidian','plugins'],
+    ['obsidian','vault'], ['obsidian','canvas'], ['obsidian','pkm'],
+    ['graph','backlinks'], ['graph','tags'], ['graph','md-note'],
+    ['markdown','md-note'], ['md-note','vault'], ['vault','sync'],
+    ['pkm','zettel'], ['pkm','tags'], ['zettel','md-note'],
+    ['plugins','canvas'], ['tags','md-note'],
+    ['sync','vault'], ['canvas','md-note']
+  ],
+  camera: { x: 0, y: 0, scale: 1 }
+};
+
+/* =========================================================
+   STATE
+   ========================================================= */
+let nodes = [];
+let links = [];
+let nodeMap = {};
+let cam = { x: 0, y: 0, scale: 1 };
+let selected = null;
+let hoverNode = null;
+let dragNode = null, isPanning = false, panStart = null;
+
+/* =========================================================
+   PERSISTENCE
+   ========================================================= */
+const STORAGE_KEY = 'obsidian-graph-view-v1';
+let saveTimeout = null;
+
+const saveIndicator = document.getElementById('saveIndicator');
+function showIndicator(state){
+  if (state === 'saving'){ saveIndicator.textContent = '● сохранение…'; saveIndicator.className = 'saving'; }
+  else if (state === 'saved'){ saveIndicator.textContent = '✓ сохранено'; saveIndicator.className = 'saved';
+    setTimeout(()=>{ saveIndicator.textContent = ''; saveIndicator.className = ''; }, 1500); }
+}
+
+function serialize(){
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    camera: { x: cam.x, y: cam.y, scale: cam.scale },
+    nodes: nodes.map(n=>({
+      id: n.id, label: n.label, tags: n.tags || [], content: n.content || '',
+      r: n.r, color: n.color, x: n.x, y: n.y
+    })),
+    links: links.map(l=>({ source: l.source.id, target: l.target.id }))
+  };
+}
+
+function saveToLocalStorage(){
+  try {
+    showIndicator('saving');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serialize()));
+    showIndicator('saved');
+  } catch (e){
+    console.error('Save failed', e);
+    showToast('Не удалось сохранить: ' + e.message, 'error');
+  }
+}
+
+function scheduleSave(){
+  clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(saveToLocalStorage, 400);
+}
+
+function loadFromLocalStorage(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch(e){ return null; }
+}
+
+function applyData(data){
+  if (!data || !Array.isArray(data.nodes)) throw new Error('Неверный формат данных');
+
+  // восстановить узлы
+  nodes = data.nodes.map((n,i)=>({
+    id: String(n.id ?? ('n'+i)),
+    label: String(n.label ?? 'Заметка'),
+    tags: Array.isArray(n.tags) ? n.tags.slice() : [],
+    content: String(n.content ?? ''),
+    r: Number(n.r) || 10,
+    color: n.color || palette[i % palette.length],
+    x: Number.isFinite(n.x) ? n.x : Math.random()*400-200,
+    y: Number.isFinite(n.y) ? n.y : Math.random()*400-200,
+    vx: 0, vy: 0
+  }));
+
+  nodeMap = Object.fromEntries(nodes.map(n=>[n.id, n]));
+
+  // восстановить связи
+  links = [];
+  if (Array.isArray(data.links)){
+    for (const l of data.links){
+      let s, t;
+      if (Array.isArray(l)) { s = l[0]; t = l[1]; }
+      else { s = l.source; t = l.target; }
+      const A = nodeMap[s], B = nodeMap[t];
+      if (A && B && A !== B) links.push({ source: A, target: B });
+    }
+  }
+
+  // камера
+  cam = {
+    x: Number(data.camera?.x) || 0,
+    y: Number(data.camera?.y) || 0,
+    scale: Math.max(0.25, Math.min(3, Number(data.camera?.scale) || 1))
+  };
+
+  selected = null;
+  hoverNode = null;
+  panel.classList.remove('open');
+}
+
+/* =========================================================
+   CANVAS
+   ========================================================= */
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+
+function resize(){
+  DPR = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || window.innerWidth;
+  const h = cv.clientHeight || window.innerHeight;
+  cv.width  = Math.floor(w * DPR);
+  cv.height = Math.floor(h * DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', ()=>{ resize(); scheduleSave(); });
+window.addEventListener('orientationchange', resize);
+document.addEventListener('fullscreenchange', ()=>setTimeout(resize, 100));
+
+/* =========================================================
+   FORCE SIMULATION
+   ========================================================= */
+function tick(){
+  for (let i=0;i<nodes.length;i++){
+    const a = nodes[i];
+    for (let j=i+1;j<nodes.length;j++){
+      const b = nodes[j];
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const d2 = dx*dx+dy*dy+0.01;
+      const d = Math.sqrt(d2);
+      const minDist = (a.r + b.r + 60);
+      if (d < minDist){
+        const force = (minDist - d) / d * 0.15;
+        const fx = dx*force, fy = dy*force;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+    }
+  }
+  for (const l of links){
+    const a = l.source, b = l.target;
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const d = Math.sqrt(dx*dx+dy*dy)+0.001;
+    const force = (d - 140) * 0.005;
+    const fx = dx/d*force, fy = dy/d*force;
+    a.vx += fx; a.vy += fy;
+    b.vx -= fx; b.vy -= fy;
+  }
+  for (const n of nodes){
+    if (n === dragNode) continue;
+    n.vx -= n.x * 0.002;
+    n.vy -= n.y * 0.002;
+    n.vx *= 0.85;
+    n.vy *= 0.85;
+    n.x += n.vx;
+    n.y += n.vy;
+  }
+}
+
+/* =========================================================
+   RENDER
+   ========================================================= */
+function render(){
+  const W = cv.clientWidth, H = cv.clientHeight;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  const g = ctx.createRadialGradient(W/2, H/2, 50, W/2, H/2, Math.max(W,H));
+  g.addColorStop(0, '#1e1e2e');
+  g.addColorStop(1, '#11111b');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  ctx.translate(W/2 + cam.x, H/2 + cam.y);
+  ctx.scale(cam.scale, cam.scale);
+
+  for (const l of links){
+    const a = l.source, b = l.target;
+    const active = selected && (a.id===selected.id || b.id===selected.id);
+    ctx.strokeStyle = active ? 'rgba(137,180,250,0.9)' : 'rgba(108,112,134,0.35)';
+    ctx.lineWidth = (active ? 1.8 : 1) / cam.scale;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+
+  for (const n of nodes){
+    const isHover = n === hoverNode;
+    const isSel = n === selected;
+
+    if (isSel || isHover){
+      const grad = ctx.createRadialGradient(n.x, n.y, n.r, n.x, n.y, n.r+12);
+      grad.addColorStop(0, n.color + 'cc');
+      grad.addColorStop(1, n.color + '00');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r + 12, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+    ctx.fillStyle = isSel ? n.color : n.color + 'dd';
+    ctx.fill();
+    ctx.lineWidth = 2 / cam.scale;
+    ctx.strokeStyle = isSel ? '#fff' : 'rgba(255,255,255,0.15)';
+    ctx.stroke();
+
+    ctx.fillStyle = '#cdd6f4';
+    ctx.font = `${12 / cam.scale}px -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(n.label, n.x, n.y + n.r + 4);
+  }
+  ctx.restore();
+}
+
+function loop(){
+  tick();
+  render();
+  requestAnimationFrame(loop);
+}
+
+/* =========================================================
+   COORDS
+   ========================================================= */
+function screenToWorld(sx, sy){
+  const W = cv.clientWidth, H = cv.clientHeight;
+  return {
+    x: (sx - W/2 - cam.x) / cam.scale,
+    y: (sy - H/2 - cam.y) / cam.scale
+  };
+}
+function findNodeAt(sx, sy){
+  const p = screenToWorld(sx, sy);
+  for (let i=nodes.length-1;i>=0;i--){
+    const n = nodes[i];
+    const dx = p.x - n.x, dy = p.y - n.y;
+    if (dx*dx+dy*dy <= (n.r+4)*(n.r+4)) return n;
+  }
+  return null;
+}
+
+/* =========================================================
+   MOUSE
+   ========================================================= */
+cv.addEventListener('mousedown', e=>{
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const n = findNodeAt(mx, my);
+  if (n){
+    dragNode = n;
+    const p = screenToWorld(mx, my);
+    dragNode._off = { x: n.x - p.x, y: n.y - p.y };
+    dragNode._moved = false;
+  } else {
+    isPanning = true;
+    panStart = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
+  }
+});
+cv.addEventListener('mousemove', e=>{
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  if (dragNode){
+    const p = screenToWorld(mx, my);
+    dragNode.x = p.x + dragNode._off.x;
+    dragNode.y = p.y + dragNode._off.y;
+    dragNode.vx = dragNode.vy = 0;
+    dragNode._moved = true;
+    return;
+  }
+  if (isPanning){
+    cam.x = panStart.cx + (e.clientX - panStart.x);
+    cam.y = panStart.cy + (e.clientY - panStart.y);
+    return;
+  }
+  hoverNode = findNodeAt(mx, my);
+  cv.style.cursor = hoverNode ? 'pointer' : 'grab';
+});
+window.addEventListener('mouseup', ()=>{
+  if (dragNode){
+    if (!dragNode._moved) selectNode(dragNode);
+    else scheduleSave();
+  } else if (isPanning){
+    scheduleSave();
+  }
+  dragNode = null;
+  isPanning = false;
+});
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const before = screenToWorld(mx, my);
+  const factor = e.deltaY < 0 ? 1.1 : 0.9;
+  cam.scale = Math.max(0.25, Math.min(3, cam.scale * factor));
+  const after = screenToWorld(mx, my);
+  cam.x += (after.x - before.x) * cam.scale;
+  cam.y += (after.y - before.y) * cam.scale;
+  scheduleSave();
+}, { passive: false });
+
+/* =========================================================
+   TOUCH
+   ========================================================= */
+let touchPanStart = null, touchDragNode = null, pinchStart = null;
+cv.addEventListener('touchstart', e=>{
+  const rect = cv.getBoundingClientRect();
+  if (e.touches.length === 1){
+    const t = e.touches[0];
+    const mx = t.clientX - rect.left, my = t.clientY - rect.top;
+    const n = findNodeAt(mx, my);
+    if (n){
+      touchDragNode = n;
+      const p = screenToWorld(mx, my);
+      touchDragNode._off = { x: n.x - p.x, y: n.y - p.y };
+      touchDragNode._moved = false;
+    } else {
+      touchPanStart = { x: t.clientX, y: t.clientY, cx: cam.x, cy: cam.y };
+    }
+  } else if (e.touches.length === 2){
+    const [a,b] = e.touches;
+    pinchStart = {
+      dist: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
+      scale: cam.scale,
+      cx: (a.clientX + b.clientX)/2,
+      cy: (a.clientY + b.clientY)/2,
+      camx: cam.x, camy: cam.y
+    };
+  }
+}, { passive: false });
+
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  const rect = cv.getBoundingClientRect();
+  if (touchDragNode && e.touches.length === 1){
+    const t = e.touches[0];
+    const p = screenToWorld(t.clientX - rect.left, t.clientY - rect.top);
+    touchDragNode.x = p.x + touchDragNode._off.x;
+    touchDragNode.y = p.y + touchDragNode._off.y;
+    touchDragNode.vx = touchDragNode.vy = 0;
+    touchDragNode._moved = true;
+  } else if (touchPanStart && e.touches.length === 1){
+    const t = e.touches[0];
+    cam.x = touchPanStart.cx + (t.clientX - touchPanStart.x);
+    cam.y = touchPanStart.cy + (t.clientY - touchPanStart.y);
+  } else if (pinchStart && e.touches.length === 2){
+    const [a,b] = e.touches;
+    const dist = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    const newScale = Math.max(0.25, Math.min(3, pinchStart.scale * (dist/pinchStart.dist)));
+    const mx = pinchStart.cx - rect.left, my = pinchStart.cy - rect.top;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    const wx = (mx - W/2 - pinchStart.camx) / pinchStart.scale;
+    const wy = (my - H/2 - pinchStart.camy) / pinchStart.scale;
+    cam.scale = newScale;
+    cam.x = mx - W/2 - wx * cam.scale;
+    cam.y = my - H/2 - wy * cam.scale;
+  }
+}, { passive: false });
+
+cv.addEventListener('touchend', e=>{
+  if (touchDragNode){
+    if (!touchDragNode._moved) selectNode(touchDragNode);
+    else scheduleSave();
+    touchDragNode = null;
+  }
+  if (touchPanStart){ scheduleSave(); touchPanStart = null; }
+  if (e.touches.length < 2) pinchStart = null;
+});
+
+/* =========================================================
+   PANEL
+   ========================================================= */
+const panel = document.getElementById('panel');
+const panelContent = document.getElementById('panelContent');
+
+function neighborsOf(n){
+  return links
+    .filter(l => l.source === n || l.target === n)
+    .map(l => l.source === n ? l.target : l.source);
+}
+
+function selectNode(n){
+  selected = n;
+  renderPanel();
+  panel.classList.add('open');
+}
+
+function renderPanel(){
+  const n = selected;
+  if (!n) return;
+  const neighbors = neighborsOf(n);
+  const others = nodes.filter(x => x !== n && !neighbors.includes(x));
+
+  panelContent.innerHTML = `
+    <h2 contenteditable="true" id="titleEdit">${escapeHtml(n.label)}</h2>
+    <div id="tagsRow">${(n.tags||[]).map(t=>`<span class="tag">#${escapeHtml(t)}</span>`).join('')}</div>
+    <textarea id="contentEdit" placeholder="Текст заметки...">${escapeHtml(n.content||'')}</textarea>
+    <div class="actions">
+      <button id="addTagBtn">+ Тег</button>
+      <button id="setColorBtn">🎨 Цвет</button>
+    </div>
+    <div class="links-title">
+      <span>Связано (${neighbors.length})</span>
+    </div>
+    <div id="linksList">
+      ${neighbors.map(m=>`
+        <div class="link-item" data-id="${m.id}">
+          <span>→ ${escapeHtml(m.label)}</span>
+          <span class="unlink" data-unlink="${m.id}" title="Удалить связь">✕</span>
+        </div>
+      `).join('') || '<div style="color:#6c7086;font-size:13px;padding:6px 0">Нет связей</div>'}
+    </div>
+    <div class="links-title"><span>Создать связь</span></div>
+    <select id="linkSelect">
+      <option value="">— выбрать заметку —</option>
+      ${others.map(m=>`<option value="${m.id}">${escapeHtml(m.label)}</option>`).join('')}
+    </select>
+    <div class="actions">
+      <button id="deleteBtn" class="danger">Удалить заметку</button>
+    </div>
+  `;
+
+  // Заголовок
+  const titleEdit = panelContent.querySelector('#titleEdit');
+  titleEdit.addEventListener('blur', ()=>{
+    const v = titleEdit.textContent.trim();
+    if (v && v !== n.label){ n.label = v; scheduleSave(); }
+    else if (!v){ titleEdit.textContent = n.label; }
+  });
+  titleEdit.addEventListener('keydown', e=>{
+    if (e.key === 'Enter'){ e.preventDefault(); titleEdit.blur(); }
+  });
+
+  // Содержимое
+  const contentEdit = panelContent.querySelector('#contentEdit');
+  contentEdit.addEventListener('input', ()=>{
+    n.content = contentEdit.value;
+    scheduleSave();
+  });
+
+  // Добавить тег
+  panelContent.querySelector('#addTagBtn').addEventListener('click', ()=>{
+    const t = prompt('Новый тег (без #):');
+    if (!t) return;
+    const clean = t.replace(/^#/, '').trim();
+    if (!clean) return;
+    n.tags = n.tags || [];
+    if (!n.tags.includes(clean)) n.tags.push(clean);
+    scheduleSave();
+    renderPanel();
+  });
+
+  // Сменить цвет
+  panelContent.querySelector('#setColorBtn').addEventListener('click', ()=>{
+    const idx = palette.indexOf(n.color);
+    n.color = palette[(idx + 1) % palette.length];
+    scheduleSave();
+    renderPanel();
+  });
+
+  // Клик по связанному узлу
+  panelContent.querySelectorAll('.link-item').forEach(el=>{
+    el.addEventListener('click', e=>{
+      if (e.target.dataset.unlink) return;
+      const target = nodeMap[el.dataset.id];
+      if (target) selectNode(target);
+    });
+  });
+
+  // Удалить связь
+  panelContent.querySelectorAll('[data-unlink]').forEach(el=>{
+    el.addEventListener('click', e=>{
+      e.stopPropagation();
+      const id = el.dataset.unlink;
+      links = links.filter(l => !(
+        (l.source.id === n.id && l.target.id === id) ||
+        (l.target.id === n.id && l.source.id === id)
+      ));
+      scheduleSave();
+      renderPanel();
+    });
+  });
+
+  // Создать связь
+  const linkSelect = panelContent.querySelector('#linkSelect');
+  if (linkSelect){
+    linkSelect.addEventListener('change', ()=>{
+      const id = linkSelect.value;
+      if (!id) return;
+      const target = nodeMap[id];
+      if (!target) return;
+      const exists = links.some(l =>
+        (l.source === n && l.target === target) ||
+        (l.source === target && l.target === n)
+      );
+      if (!exists) links.push({ source: n, target });
+      scheduleSave();
+      renderPanel();
+    });
+  }
+
+  // Удалить заметку
+  panelContent.querySelector('#deleteBtn').addEventListener('click', ()=>{
+    if (!confirm(`Удалить заметку "${n.label}"?`)) return;
+    links = links.filter(l => l.source !== n && l.target !== n);
+    nodes = nodes.filter(x => x !== n);
+    delete nodeMap[n.id];
+    selected = null;
+    panel.classList.remove('open');
+    scheduleSave();
+  });
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+document.getElementById('closePanel').addEventListener('click', ()=>{
+  panel.classList.remove('open');
+  selected = null;
+});
+
+/* =========================================================
+   SEARCH
+   ========================================================= */
+const searchInput = document.getElementById('search');
+searchInput.addEventListener('input', ()=>{
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q){ hoverNode = null; return; }
+  const found = nodes.find(n => n.label.toLowerCase().includes(q));
+  if (found){
+    hoverNode = found;
+    cam.x = -found.x * cam.scale;
+    cam.y = -found.y * cam.scale;
+  }
+});
+
+/* =========================================================
+   ADD NODE
+   ========================================================= */
+document.getElementById('addBtn').addEventListener('click', ()=>{
+  const label = prompt('Название заметки:', 'Новая заметка');
+  if (!label) return;
+  const id = 'n' + Date.now();
+  const newNode = {
+    id, label,
+    tags: ['новая'],
+    content: '',
+    r: 10,
+    color: palette[nodes.length % palette.length],
+    x: Math.random()*200-100,
+    y: Math.random()*200-100,
+    vx: 0, vy: 0
+  };
+  nodes.push(newNode);
+  nodeMap[id] = newNode;
+  if (nodes.length > 1){
+    const target = nodes[Math.floor(Math.random() * (nodes.length - 1))];
+    links.push({ source: newNode, target });
+  }
+  scheduleSave();
+  selectNode(newNode);
+});
+
+/* =========================================================
+   RESET VIEW
+   ========================================================= */
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  cam.x = 0; cam.y = 0; cam.scale = 1;
+  scheduleSave();
+});
+
+/* =========================================================
+   EXPORT
+   ========================================================= */
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const data = serialize();
+  data.savedAt = new Date().toISOString();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  a.href = url;
+  a.download = `obsidian-graph-${ts}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  showToast('Файл сохранён', 'success');
+});
+
+/* =========================================================
+   IMPORT
+   ========================================================= */
+const fileInput = document.getElementById('fileInput');
+document.getElementById('importBtn').addEventListener('click', ()=>{
+  fileInput.value = '';
+  fileInput.click();
+});
+fileInput.addEventListener('change', ()=>{
+  const f = fileInput.files && fileInput.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try {
+      const data = JSON.parse(reader.result);
+      if (selected) { selected = null; panel.classList.remove('open'); }
+      applyData(data);
+      saveToLocalStorage();
+      showToast('Загружено: ' + nodes.length + ' заметок', 'success');
+    } catch(e){
+      showToast('Ошибка загрузки: ' + e.message, 'error');
+    }
+  };
+  reader.readAsText(f);
+});
+
+/* =========================================================
+   CLEAR / RESET TO DEMO
+   ========================================================= */
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  if (!confirm('Удалить все данные и вернуть демо-граф?')) return;
+  try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+  selected = null;
+  hoverNode = null;
+  panel.classList.remove('open');
+  applyData(JSON.parse(JSON.stringify(DEMO_DATA)));
+  // разложить узлы, чтобы не совпали
+  nodes.forEach(n=>{
+    n.x = Math.random()*600-300;
+    n.y = Math.random()*600-300;
+  });
+  scheduleSave();
+  showToast('Данные сброшены', 'success');
+});
+
+/* =========================================================
+   FULLSCREEN
+   ========================================================= */
+const fsBtn = document.getElementById('fsBtn');
+fsBtn.addEventListener('click', ()=>{
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement){
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+});
+document.addEventListener('fullscreenchange', ()=>setTimeout(resize, 100));
+document.addEventListener('webkitfullscreenchange', ()=>setTimeout(resize, 100));
+
+/* =========================================================
+   TOAST
+   ========================================================= */
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+function showToast(msg, type){
+  toastEl.textContent = msg;
+  toastEl.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ toastEl.className = type || ''; }, 2000);
+}
+
+/* =========================================================
+   KEYBOARD
+   ========================================================= */
+document.addEventListener('keydown', e=>{
+  // Ctrl+S — сохранить в файл
+  if ((e.ctrlKey || e.metaKey) && e.key === 's'){
+    e.preventDefault();
+    document.getElementById('exportBtn').click();
+  }
+  // Ctrl+O — загрузить файл
+  if ((e.ctrlKey || e.metaKey) && e.key === 'o'){
+    e.preventDefault();
+    document.getElementById('importBtn').click();
+  }
+  // Esc — закрыть панель
+  if (e.key === 'Escape' && panel.classList.contains('open')){
+    panel.classList.remove('open');
+    selected = null;
+  }
+  // Delete — удалить выбранную заметку
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected &&
+      document.activeElement.tagName !== 'TEXTAREA' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      !document.activeElement.isContentEditable){
+    e.preventDefault();
+    if (confirm(`Удалить заметку "${selected.label}"?`)){
+      links = links.filter(l => l.source !== selected && l.target !== selected);
+      nodes = nodes.filter(x => x !== selected);
+      delete nodeMap[selected.id];
+      selected = null;
+      panel.classList.remove('open');
+      scheduleSave();
+    }
+  }
+});
+
+// Сохранение перед уходом
+window.addEventListener('beforeunload', ()=>{
+  clearTimeout(saveTimeout);
+  saveToLocalStorage();
+});
+
+/* =========================================================
+   START
+   ========================================================= */
+(function init(){
+  resize();
+  setTimeout(resize, 50);
+  setTimeout(resize, 300);
+
+  const saved = loadFromLocalStorage();
+  if (saved && Array.isArray(saved.nodes) && saved.nodes.length){
+    try {
+      applyData(saved);
+      showToast('Загружено сохранение', 'success');
+    } catch(e){
+      console.warn('Saved data invalid, falling back to demo', e);
+      applyData(JSON.parse(JSON.stringify(DEMO_DATA)));
+    }
+  } else {
+    applyData(JSON.parse(JSON.stringify(DEMO_DATA)));
+    // разложить случайно, чтобы не слипались
+    nodes.forEach(n=>{
+      n.x = Math.random()*600-300;
+      n.y = Math.random()*600-300;
+    });
+    scheduleSave();
+  }
+
+  loop();
+})();
+</script>
+</body>
+</html>
